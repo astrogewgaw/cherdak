@@ -1,0 +1,203 @@
+"""
+This is it.
+
+```bash
+python astrochymist.py
+```
+"""
+
+import re
+import json
+import click
+import pathlib
+import requests
+
+from bs4 import Tag
+from textwrap import dedent
+from rich.panel import Panel
+from bs4 import BeautifulSoup
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.traceback import install
+from itertools import chain, zip_longest
+
+
+console = Console()
+install(console=console, suppress=[click, requests])
+url = "http://astrochymist.org/astrochymist_ism.html"
+
+
+class AstrochymistError(Exception):
+    pass
+
+
+def help(ctx, _, value):
+    if not value or ctx.resilient_parsing:
+        return
+    console.print(
+        Panel(
+            padding=1,
+            expand=False,
+            title_align="left",
+            title="[b]astrochymist.py[/b]",
+            renderable=Markdown(
+                dedent(str(__doc__)).strip(),
+                hyperlinks=True,
+                justify="full",
+                code_theme="fruity",
+            ),
+        )
+    )
+    ctx.exit()
+
+
+@click.command()
+@click.option(
+    "--help",
+    is_flag=True,
+    callback=help,
+    is_eager=True,
+    expose_value=False,
+)
+def main():
+    with console.status("Scraping...", spinner="point"):
+        response = requests.get(url)
+        if response.status_code != 200:
+            raise AstrochymistError(
+                dedent(
+                    f"""
+                    The script could not connect to database on the Astrochymist
+                    site (here: {url})! The status code is {response.status_code},
+                    which could help you track down the problem.
+                    """
+                )
+                .replace("\n", " ")
+                .strip()
+            )
+        soup = BeautifulSoup(response.content, features="lxml")
+        body = soup.body
+        if body is not None:
+            table = body("table")[2]
+        else:
+            raise AstrochymistError(
+                dedent(
+                    f"""
+                    The script could not find a body in the HTML of the Astrochymist
+                    page. This can only mean that something has gone terribly wrong;
+                    maybe the site is down now, or it has been taken down forever.
+                    Anyways, \u3055\u3088\u306a\u3089!
+                    """
+                )
+                .replace("\n", " ")
+                .strip()
+            )
+        rows = table("tr", recursive=False)
+        rows = rows[1:]
+        molecules = [
+            {
+                "molecular_formula": (
+                    lambda _: (lambda _: "".join(_.split()))(
+                        (
+                            lambda _: _("font")[0].text.replace(_("font")[1].text, "")
+                            if len(_("font")) > 1
+                            else _("font")[0].text
+                        )(_)
+                    )
+                )(_[1]),
+                "galactic_sources": (
+                    lambda _: [
+                        ("", __)
+                        if (_ in ["etc.", "???"]) or (_.find("sources") != -1)
+                        else (_, __)
+                        for _, __ in chain.from_iterable(
+                            [
+                                [(_, band) for _ in re.split(r"\s*[,]\s*", name)]
+                                if name.find(",") != -1
+                                else [
+                                    (
+                                        name.replace("and 4 dark clouds", "").strip(),
+                                        band,
+                                    )
+                                ]
+                                for name, band in zip_longest(
+                                    [
+                                        [
+                                            _
+                                            for _ in bar.previous_siblings
+                                            if (_ != Tag(name="br")) and (_ != "\n")
+                                        ][0].strip()
+                                        for bar in bars
+                                    ],
+                                    (
+                                        lambda x: [
+                                            {
+                                                "cyan": "Radio",
+                                                "pink": "IR",
+                                                "yellow": "UV/Vis",
+                                            }.get(_.get("color", None), None)
+                                            for _ in x("font")
+                                        ]
+                                    )(_),
+                                    fillvalue="",
+                                )
+                            ]
+                        )
+                    ]
+                    if (bars := _("hr", width="50%"))
+                    else [None, None]
+                )(_[3]),
+                "discovery_year": (
+                    lambda _: (_.font.string or _.font.b.string) if _.font else None
+                )(_[0]),
+                "extragalactic": (
+                    lambda _: (_("font")[1].string, _.a.get("href", None))
+                    if (_.font is not None) and (_.a is not None)
+                    else (None, None)
+                )(_[0]),
+                "references": (
+                    lambda _: [
+                        (
+                            _.text.strip(),
+                            _.get("href", None),
+                            __,
+                        )
+                        for _, __ in zip(
+                            _("a"),
+                            (
+                                lambda _: [
+                                    re.findall(
+                                        r"((?:[A-Z][.]\s*)+(?:\w{2,3})?\s*\w+)",
+                                        str(_.next_sibling),
+                                    )
+                                    for _ in _("br")
+                                    if (_.next_sibling != Tag(name="br"))
+                                    and (_.next_sibling != "\n")
+                                ]
+                            )(_),
+                        )
+                    ]
+                )(_[2]),
+                "tentative": (lambda _: True if _.font.i is not None else False)(_[1]),
+            }
+            for _ in [
+                _
+                for _ in [
+                    _(
+                        ["th", "td"],
+                        recursive=False,
+                    )
+                    for _ in rows
+                ]
+                if len(_) == 4
+            ]
+        ]
+        with (pathlib.Path.cwd() / "astrochymist.json").open("w+") as fp:
+            json.dump(
+                fp=fp,
+                indent=4,
+                obj={str(i + 1): molecule for i, molecule in enumerate(molecules)},
+            )
+
+
+if __name__ == "__main__":
+    main()
