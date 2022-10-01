@@ -1,12 +1,12 @@
 <img src="assets/cherdak.jpg" align="right" width=45% style="margin:0px 0px 25px 50px">
 <div style="font-family:JetBrainsMono Nerd Font">
 <div align="left">
-<h3>Мой чердак | My attic</h3>
-<hr width=38% align="left">
-<h5><i>All the code that I wrote and forgot</i></h5>
+<h1>Мой чердак | My attic</h1>
+<h3><i>All the code that I wrote and forgot</i></h3>
 <br/>
 <img src=https://img.shields.io/github/license/astrogewgaw/cherdak?style=for-the-badge>
 <img src=https://img.shields.io/github/stars/astrogewgaw/cherdak?style=for-the-badge>
+<br/>
 <a href="https://gitmoji.dev"><img src=https://img.shields.io/badge/gitmoji-%20😜%20😍-FFDD67.svg?style=for-the-badge></a>
 <a href="https://github.com/psf/black"><img src=https://img.shields.io/badge/code%20style-black-000000.svg?style=for-the-badge></a>
 </div>
