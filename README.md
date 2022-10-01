@@ -1,16 +1,20 @@
-<img src="assets/cherdak.jpg" align="right" width=45% style="margin:0px 0px 25px 50px">
 <div style="font-family:JetBrainsMono Nerd Font">
-<div align="left">
+<div align="right">
 <h1>Мой чердак | My attic</h1>
 <h3><i>All the code that I wrote and forgot</i></h3>
 <br/>
 <img src=https://img.shields.io/github/license/astrogewgaw/cherdak?style=for-the-badge>
 <img src=https://img.shields.io/github/stars/astrogewgaw/cherdak?style=for-the-badge>
-<br/>
 <a href="https://gitmoji.dev"><img src=https://img.shields.io/badge/gitmoji-%20😜%20😍-FFDD67.svg?style=for-the-badge></a>
 <a href="https://github.com/psf/black"><img src=https://img.shields.io/badge/code%20style-black-000000.svg?style=for-the-badge></a>
 </div>
-<br/>
+<br/><br/>
+<img
+    alt="cherdak"
+    src="assets/cherdak.jpg"
+    align="right" width=50%
+    style="margin:0px 0px 25px 50px"
+>
 <div align="justify">
 This is my <b>чердак</b> (pronounced <i>cherdak</i>; means <i>attic</i> in
 Russian), where I store all those scripts that have nowhere else to go. Here you
