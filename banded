@@ -1,0 +1,48 @@
+#!/usr/bin/env python
+
+import click
+import numpy as np
+
+
+def gaussian(
+    x: np.ndarray,
+    x0: float,
+    wx: float,
+    wy: float,
+) -> np.ndarray:
+    σ = wx / (2 * np.sqrt(2 * np.log(100)))
+    f = np.exp(-0.5 * (((x - x0) ** 2) / (σ**2)))
+    f /= np.sqrt(1 / (2 * np.pi * σ**2))
+    f /= f.max()
+    f *= wy
+    return f
+
+
+@click.command()
+@click.option("-bw", type=float, help="Bandwidth.")
+@click.option("-nf", type=int, help="Number of channels.")
+@click.option("-fch1", type=float, help="Frequency of the first channel.")
+@click.option("-bo", type=float, default=0.1, help="Band occupancy of the burst.")
+def main(
+    nf: int,
+    bw: float,
+    bo: float,
+    fch1: float,
+) -> None:
+    """
+    Construct and save a Gaussian spectrum for an FRB burst.
+    """
+
+    np.savetxt(
+        f"spc{bo:.0f}.txt",
+        gaussian(
+            np.linspace(fch1, fch1 - bw, nf),
+            fch1 - bw / 2,
+            (bo / 100) * bw,
+            1.0,
+        ),
+    )
+
+
+if __name__ == "__main__":
+    main()

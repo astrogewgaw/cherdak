@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+
+declare -A sys
+
+cls() { printf "\e[2J\e[H"; }
+strip() { printf '%s\n' "${1/$2/}"; }
+
+cover() {
+	echo "███████╗██╗███╗   ███╗██╗   ██╗██╗      █████╗  ██████╗██████╗  █████╗ "
+	echo "██╔════╝██║████╗ ████║██║   ██║██║     ██╔══██╗██╔════╝██╔══██╗██╔══██╗"
+	echo "███████╗██║██╔████╔██║██║   ██║██║     ███████║██║     ██████╔╝███████║"
+	echo "╚════██║██║██║╚██╔╝██║██║   ██║██║     ██╔══██║██║     ██╔══██╗██╔══██║"
+	echo "███████║██║██║ ╚═╝ ██║╚██████╔╝███████╗██║  ██║╚██████╗██║  ██║██║  ██║"
+	echo "╚══════╝╚═╝╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝"
+	echo "                                                                       "
+	echo "© 2023 Ujjwal Panda | MIT License                                      "
+	printf "\n\n"
+	echo "$(gum format -- "
+  **Simulacra** is a shell script that wraps the \`simulatesearch\` library,
+  written by Rui Luo and George Hobbs, for high-resolution pulsar and FRB
+  simulations. It makes it easier to do multiple simulations at once. At
+  the moment, it only supports simulating data for the GMRT. It is written
+  purely in Bash, but it uses a couple of Python scripts, and the amazing
+  \`gum\` (https://github.com/charmbracelet/gum) tool, to make things easier
+  (and cooler).")"
+}
+
+helps() {
+	cover | gum style \
+		--width 90 \
+		--align left \
+		--padding "1 2" \
+		--border normal
+	printf "\n"
+}
+
+noisy() {
+	declare -a keys=(
+		"bno"
+		"nf"
+		"dt"
+		"tobs"
+		"raj"
+		"decj"
+		"ntype"
+	)
+
+	declare -A defs=(
+		["bno"]="3"
+		["nf"]="4096"
+		["dt"]="1.31072e-3"
+		["tobs"]="180"
+		["raj"]="0.2"
+		["decj"]="-0.2"
+		["ntype"]="white"
+	)
+
+	declare -A prompts=(
+		["bno"]="GMRT frequency band to use: "
+		["nf"]="Number of channels: "
+		["dt"]="Sampling time (in s): "
+		["tobs"]="Observation time (in s): "
+		["raj"]="Right ascension (in rad): "
+		["decj"]="Declination (in rad): "
+		["ntype"]="Noise type (white/red): "
+	)
+
+	for key in "${keys[@]}"; do
+		sys[$key]=$(gum input --value="${defs[$key]}" --prompt="${prompts[$key]}")
+	done
+	cls
+
+	case "${sys["bno"]}" in
+	3)
+		sys["fl"]=300
+		sys["fh"]=500
+		sys["bw"]=200
+		sys["tsys"]=165
+		sys["gain"]=0.38
+		;;
+	4)
+		sys["fl"]=550
+		sys["fh"]=750
+		sys["bw"]=200
+		sys["tsys"]=100
+		sys["gain"]=0.35
+		;;
+	5)
+		sys["fl"]=1000
+		sys["fh"]=1400
+		sys["bw"]=400
+		sys["tsys"]=75
+		sys["gain"]=0.22
+		;;
+	esac
+
+	cat >"sys.params" <<EOF
+name: System for Band ${sys["bno"]} of the GMRT with ${sys["ntype"]} noise.
+telescope: GMRT
+observer: upanda
+f1: ${sys["fl"]}
+f2: ${sys["fh"]}
+nchan: ${sys["nf"]}
+t0: 0
+t1: ${sys["tobs"]}
+tsamp: ${sys["dt"]}
+raj: ${sys["raj"]}
+decj: ${sys["decj"]}
+useAngle: 0
+gain: $(echo "${sys["gain"]}*20" | bc -l)
+tsys: ${sys["tsys"]}
+nbits: 8
+imjd: 59000
+smjd: 0
+levelset: 1
+EOF
+
+	if [[ "${sys["ntype"]}" == "red" ]]; then
+		gum format -- "*Enter red noise parameters*:"
+
+		sys["α_red"]=$(gum input --value="-1.9" --prompt "Spectral index: ")
+		sys["A_red"]=$(gum input --value="5e-3" --prompt "Ampltiude (in Jy): ")
+		sys["τ_red"]=$(gum input --value="10000" --prompt "Number of samples: ")
+		sys["ν_red"]=$(gum input --value="32.0" --prompt "Flattening frequency (in Hz): ")
+
+		echo "rednoise: ${sys["A_red"]} ${sys["α_red"]} ${sys["ν_red"]} 0.0 ${sys["τ_red"]}" >>"sys.params"
+	fi
+	cls
+
+	gum spin --spinner dot --title "Churning out noise!" -- simulateSystemNoise -p "sys.params" -o "sys.dat"
+	simulateSetLevels -f "sys.dat"
+	cls
+}
+
+furby() {
+	declare -a keys=(
+		"flx"
+		"t0"
+		"w"
+		"dm"
+		"dmix"
+		"spc"
+	)
+
+	declare -A defs=(
+		["flx"]="0.5"
+		["t0"]="90"
+		["w"]="5e-3"
+		["dm"]="500"
+		["dmix"]="-2"
+		["spc"]=""
+	)
+
+	declare -A prompts=(
+		["flx"]="Flux density (in Jy): "
+		["t0"]="Arrival time (in s): "
+		["w"]="Burst width (in s): "
+		["dm"]="Dispersion measure (in pc cm⁻³): "
+		["dmix"]="Dispersion index: "
+		["spc"]="Spectrum file, if any: "
+	)
+
+	declare -A frb
+
+	gum format -- "*Which burst parameter is to be varied?*"
+	varied=$(
+		case $(
+			gum choose \
+				"Width" \
+				"Arrival time" \
+				"Flux density" \
+				"Band occupancy" \
+				"Dispersion measure"
+		) in
+		"Width") echo "w" ;;
+		"Arrival time") echo "t0" ;;
+		"Flux density") echo "flx" ;;
+		"Band occupancy") echo "spc" ;;
+		"Dispersion measure") echo "dm" ;;
+		esac
+	)
+	cls
+
+	read -ra values <<<"$(gum input --prompt="Input values for the parameter being varied: ")"
+	for key in "${keys[@]}"; do
+		if [[ "$key" != "$varied" ]]; then
+			frb[$key]=$(gum input --value="${defs[$key]}" --prompt="${prompts[$key]}")
+		fi
+	done
+	cls
+
+	i=1
+	for value in "${values[@]}"; do
+		if [[ "$varied" == "spc" ]]; then
+			frb[$varied]="spc${value}.txt"
+			banded -bw "${sys["bw"]}" -nf "${sys["nf"]}" -fch1 "${sys["fh"]}" -bo "$value"
+		else
+			frb[$varied]="$value"
+		fi
+		fn="${varied}${value}"
+		echo "dmburst: ${frb["t0"]} ${sys["fh"]} ${frb["flx"]} ${frb["dmix"]} ${frb["w"]} ${frb["dm"]} 2 ${frb["spc"]}" >>"${fn}.params"
+		gum spin --spinner monkey --title "Molding FRB ($i)!" -- simulateBurst -p "${fn}.params" -p "sys.params" -o "${fn}.dat"
+		gum spin --spinner moon --title "Creating the final file!" -- createSearchFile -f "${fn}.dat" "$(printf -- '-f\0%s\0' $@ | xargs -0)" -f "sys.dat" -p "sys.params" -o "${fn}.sf"
+		cls
+		((i++))
+	done
+}
+
+simulacra() {
+	gum confirm "Should I begin?" && noisy || exit
+	gum confirm "Do you wish to simulate FRBs?" && furby "$@" || exit
+}
+
+CMD=$1
+case $CMD in
+"-h" | "--help") helps ;;
+*) simulacra "$@" ;;
+esac

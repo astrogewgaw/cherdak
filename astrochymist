@@ -1,9 +1,6 @@
-"""
-This is it.
+#!/usr/bin/env python
 
-```bash
-python astrochymist.py
-```
+"""
 """
 
 import re
@@ -81,7 +78,7 @@ def main():
         else:
             raise AstrochymistError(
                 dedent(
-                    f"""
+                    """
                     The script could not find a body in the HTML of the Astrochymist
                     page. This can only mean that something has gone terribly wrong;
                     maybe the site is down now, or it has been taken down forever.

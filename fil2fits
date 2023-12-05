@@ -1,0 +1,508 @@
+#!/usr/bin/env python
+
+import click
+import numpy as np
+
+from pathlib import Path
+from astropy.io import fits
+from datetime import datetime
+from rich.console import Console
+from priwo.sigproc.hdr import readhdr
+
+
+console = Console()
+
+
+def coordinates(coord: str):
+    sign = 1.0
+    number = float(coord)
+    sign = -1.0 if number < 0 else 1.0
+    xx = np.abs(number)
+    dd = int(np.floor(xx / 10000.0))
+    mm = int(np.floor((xx - dd * 10000.0) / 100.0))
+    ss = xx - dd * 10000.0 - mm * 100.0
+    result = f"{dd}:{mm}:{ss}"
+    return result if sign > 0.0 else "-" + result
+
+
+def pads(x: np.ndarray, length: int):
+    nx, _ = x.shape
+    return np.pad(x, np.asarray([[0, length - nx], [0, 0]]))
+
+
+def fil2fits(f: str) -> None:
+    meta = readhdr(f)
+
+    df = meta["foff"]
+    hf = meta["fch1"]
+    dt = meta["tsamp"]
+    npol = meta["nifs"]
+    nf = meta["nchans"]
+    nbits = meta["nbits"]
+    ra = str(meta["src_raj"])
+    dec = str(meta["src_dej"])
+
+    data = np.fliplr(
+        np.fromfile(
+            f,
+            offset=meta["size"],
+            dtype=np.uint8,
+        ).reshape(-1, nf // (8 // nbits))
+    )
+
+    nt, _ = data.shape
+    bw = np.abs(df * nf)
+    lf = hf - bw - (df / 2)
+    freqs = np.linspace(lf, hf, nf, dtype=np.float32)
+
+    primary = fits.PrimaryHDU(
+        header=fits.Header(
+            [
+                ("SIMPLE", True, "file does conform to FITS standard"),
+                ("BITPIX", 8, "number of bits per data pixel"),
+                ("NAXIS", 0, "number of data axes"),
+                ("EXTEND", True, "FITS dataset may contain extensions"),
+                # fmt: off
+                (
+                    "COMMENT",
+                    "  FITS (Flexible Image Transport System) format is defined in 'Astronomy",
+                    "",
+                ),
+                (
+                    "COMMENT",
+                    "  and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H",
+                    "",
+                ),
+                (
+                    "COMMENT",
+                    "  FITS (Flexible Image Transport System) format defined in Astronomy and",
+                    "",
+                ),
+                (
+                    "COMMENT",
+                    "  Astrophysics Supplement Series v44/p363, v44/p371, v73/p359, v73/p365.",
+                    "",
+                ),
+                (
+                    "COMMENT",
+                    "  Contact the NASA Science Office of Standards and Technology for the",
+                    "",
+                ),
+                (
+                    "COMMENT",
+                    "  FITS Definition document #100 and other FITS information.",
+                    "",
+                ),
+                # fmt: on
+                ("HDRVER", "4.3", "Header version"),
+                ("FITSTYPE", "PSRFITS", "FITS definition for pulsar data files"),
+                (
+                    "DATE",
+                    datetime.utcnow().replace(microsecond=0).isoformat(),
+                    "file creation date (YYYY-MM-DDThh:mm:ss UT)",
+                ),
+                ("OBSERVER", "upanda", "Observer name(s)"),
+                ("PROJID", "Unknown", "Project name"),
+                (
+                    "TELESCOP",
+                    {
+                        0: "Fake",
+                        1: "ARECIBO 305m",
+                        2: "Ooty",
+                        3: "Nancay",
+                        4: "Parkes",
+                        5: "Jodrell",
+                        6: "GBT",
+                        7: "GMRT",
+                        8: "Effelsberg",
+                        9: "ATA",
+                        10: "SRT",
+                        11: "LOFAR",
+                        12: "VLA",
+                        20: "CHIME",
+                        21: "FAST",
+                        64: "MeerKAT",
+                        65: "KAT-7",
+                    }.get(meta["telescope_id"], "Fake"),
+                    "Telescope name",
+                ),
+                ("ANT_X", "*", "[m] Antenna ITRF X-coordinate (D)"),
+                ("ANT_Y", "*", "[m] Antenna ITRF Y-coordinate (D)"),
+                ("ANT_Z", "*", "[m] Antenna ITRF Z-coordinate (D)"),
+                ("FRONTEND", "Frontend", "Receiver ID"),
+                ("IBEAM", "*", "Beam number for multibeam systems (1=ctr beam)"),
+                ("NRCVR", "*", "Number of receiver polarisation channels"),
+                ("FD_POLN", "LIN", "LIN or CIRC"),
+                ("FD_HAND", 1.0, "+/- 1. +1 is LIN:A=X,B=Y, CIRC:A=L,B=R (I)"),
+                ("FD_SANG", 0.0, "[deg] FA of E vect for equal sig in A&B (E)"),
+                ("FD_XYPH", 0.0, "[deg] Phase of A^* B for injected cal (E)"),
+                (
+                    "BACKEND",
+                    {
+                        0: "FAKE",
+                        1: "PSPM",
+                        2: "WAPP",
+                        3: "AOFTM",
+                        4: "BPP",
+                        5: "OOTY",
+                        6: "SCAMP",
+                        7: "SPIGOT",
+                        11: "BG/P",
+                        12: "PDEV",
+                        20: "CHIME+PSR",
+                        64: "KAT",
+                        65: "KAT-DC2",
+                    }.get(meta["machine_id"], "FAKE"),
+                    "Backend ID",
+                ),
+                ("BECONFIG", "", "Backend configuration file name"),
+                ("BE_PHASE", "*", "0/+1/-1 BE cross-phase:0 unknown,+/-1 std/rev"),
+                ("BE_DCC", "*", "0/1 BE downconversion conjugation corrected"),
+                ("BE_DELAY", "*", "[s] Backend propn delay from digitiser input"),
+                ("TCYCLE", "*", "[s] On-line cycle time (D)"),
+                ("OBS_MODE", "SEARCH", "(PSR, CAL, SEARCH)"),
+                (
+                    "DATE-OBS",
+                    "2016-10-10T03:23:32",
+                    "Date of observation (YYYY-MM-DDThh:mm:ss UTC)",
+                ),
+                (
+                    "OBSFREQ",
+                    hf - (bw / 2) - (df / 2),
+                    "[MHz] Centre frequency for observation",
+                ),
+                ("OBSBW", bw, "[MHz] Bandwidth for observation"),
+                ("OBSNCHAN", nf, "Number of frequency channels (original)"),
+                ("CHAN_DM", 0.0, "[cm-3 pc] DM used for on-line dedispersion"),
+                ("PNT_ID", "", "Name or ID for pointing ctr (multibeam feeds)"),
+                ("SRC_NAME", meta["source_name"], "Source or scan ID"),
+                ("COORD_MD", "", "Coordinate mode (J2000, GAL, ECLIP, etc.)"),
+                ("EQUINOX", "", "Equinox of coords (e.g. 2000.0)"),
+                ("RA", coordinates(ra), "Right ascension (hh:mm:ss.ssss)"),
+                ("DEC", coordinates(dec), "Declination (-dd:mm:ss.sss)"),
+                ("BMAJ", 0.1, "[deg] Beam major axis length"),
+                ("BMIN", 0.1, "[deg] Beam minor axis length"),
+                ("BPA", 0.0, "[deg] Beam position angle"),
+                ("STT_CRD1", "", "Start coord 1 (hh:mm:ss.sss or ddd.ddd)"),
+                ("STT_CRD2", "", "Start coord 2 (-dd:mm:ss.sss or -dd.ddd)"),
+                ("TRK_MODE", "TRACK", "Track mode (TRACK, SCANGC, SCANLAT)"),
+                ("STP_CRD1", "", "Stop coord 1 (hh:mm:ss.sss or ddd.ddd)"),
+                ("STP_CRD2", "", "Stop coord 2 (-dd:mm:ss.sss or -dd.ddd)"),
+                ("SCANLEN", "*", "[s] Requested scan length (E)"),
+                ("FD_MODE", "", "Feed track mode - FA, CPA, SPA, TPA"),
+                ("FA_REQ", "*", "[deg] Feed/Posn angle requested (E)"),
+                ("CAL_MODE", "", "Cal mode (OFF, SYNC, EXT1, EXT2)"),
+                ("CAL_FREQ", "*", "[Hz] Cal modulation frequency (E)"),
+                ("CAL_DCYC", "*", "Cal duty cycle (E)"),
+                ("CAL_PHS", "*", "Cal phase (wrt start time) (E)"),
+                (
+                    "STT_IMJD",
+                    int(meta["tstart"]),
+                    "Start MJD (UTC days) (J - long integer)",
+                ),
+                (
+                    "STT_SMJD",
+                    (meta["tstart"] - int(meta["tstart"])) * 86400,
+                    "[s] Start time (sec past UTC 00h) (J)",
+                ),
+                ("STT_OFFS", 0.0, "[s] Start time offset (D)"),
+                ("STT_LST", "*", "[s] Start LST (D)"),
+            ]
+        )
+    )
+
+    hishdr = fits.Header(
+        [
+            ("XTENSION", "BINTABLE", "***** Processing history *****"),
+            ("BITPIX", 8, "N/A"),
+            ("NAXIS", 2, "2-dimensional binary table"),
+            ("NAXIS1", 372, "width of table in bytes"),
+            ("NAXIS2", 0, "number of rows"),
+            ("PCOUNT", 0, "size of special data area"),
+            ("GCOUNT", 1, "one data group (required keyword)"),
+            ("TFIELDS", 25, "number of fields per row"),
+            ("TTYPE1", "DATE_PRO", "Processing date and time (UTC)"),
+            ("TFORM1", "24A", "24-char string"),
+            ("TTYPE2", "PROC_CMD", "Processing program and command"),
+            ("TFORM2", "80A", "80_char string"),
+            ("TTYPE3", "SCALE", "Units (FluxDen/RefFlux/Jansky)"),
+            ("TFORM3", "8A", "8-char string"),
+            ("TTYPE4", "POL_TYPE", "Polarisation identifier"),
+            ("TFORM4", "8A", "8-char string"),
+            ("TTYPE5", "NSUB", "Number of Sub-Integrations"),
+            ("TFORM5", "1I", "Integer"),
+            ("TTYPE6", "NPOL", "Number of polarisations"),
+            ("TFORM6", "1I", "Integer"),
+            ("TTYPE7", "NBIN", "Nr of bins per product (0 for SEARCH mode)"),
+            ("TFORM7", "1I", "Integer"),
+            ("TTYPE8", "NBIN_PRD", "Nr of bins per period"),
+            ("TFORM8", "1I", "Integer"),
+            ("TTYPE9", "TBIN", "Time per bin or sample"),
+            ("TFORM9", "1D", "Double"),
+            ("TTYPE10", "CTR_FREQ", "Band centre frequency (weighted)"),
+            ("TFORM10", "1D", "Double"),
+            ("TTYPE11", "NCHAN", "Number of frequency channels"),
+            ("TFORM11", "1I", "Integer"),
+            ("TTYPE12", "CHAN_BW", "Channel bandwidth"),
+            ("TFORM12", "1D", "Double"),
+            ("TTYPE13", "DM", "DM used for dedispersion"),
+            ("TFORM13", "1D", "Double"),
+            ("TTYPE14", "RM", "RM used for RM correction"),
+            ("TFORM14", "1D", "Double"),
+            ("TTYPE15", "PR_CORR", "Projection of receptors onto sky corrected"),
+            ("TFORM15", "1I", "Integer flag"),
+            ("TTYPE16", "FD_CORR", "Feed basis correction applied"),
+            ("TFORM16", "1I", "Integer flag"),
+            ("TTYPE17", "BE_CORR", "Backend correction applied"),
+            ("TFORM17", "1I", "Integer flag"),
+            ("TTYPE18", "RM_CORR", "RM correction applied"),
+            ("TFORM18", "1I", "Integer flag"),
+            ("TTYPE19", "DEDISP", "Data dedispersed"),
+            ("TFORM19", "1I", "Integer flag"),
+            ("TTYPE20", "DDS_MTHD", "Dedispersion method"),
+            ("TFORM20", "32A", "32-char string"),
+            ("TTYPE21", "SC_MTHD", "Scattered power correction method"),
+            ("TFORM21", "32A", "32-char string"),
+            ("TTYPE22", "CAL_MTHD", "Calibration method"),
+            ("TFORM22", "32A", "32-char string"),
+            ("TTYPE23", "CAL_FILE", "Name of gain calibration file"),
+            ("TFORM23", "32A", "32-char string"),
+            ("TTYPE24", "RFI_MTHD", "RFI excision method"),
+            ("TFORM24", "32A", "32-char string"),
+            ("TTYPE25", "IFR_MTHD", "Ionospheric Faraday rotation correction method"),
+            ("TFORM25", "32A", "32-char string"),
+            ("EXTNAME", "HISTORY", "name of this binary table extension"),
+            ("TUNIT9", "s", "units of field"),
+            ("TUNIT10", "MHz", "units of field"),
+            ("TUNIT12", "MHz", "units of field"),
+            ("TUNIT13", "CM-3", ""),
+            ("TUNIT14", "RAD", ""),
+            ("EXTVER", 1, "auto assigned by template parser"),
+        ]
+    )
+
+    history = fits.BinTableHDU.from_columns(
+        fits.ColDefs(
+            np.rec.array(
+                np.array(
+                    [],
+                    dtype=(
+                        np.record,
+                        [
+                            ("DATE_PRO", "S24"),
+                            ("PROC_CMD", "S80"),
+                            ("SCALE", "S8"),
+                            ("POL_TYPE", "S8"),
+                            ("NSUB", ">i2"),
+                            ("NPOL", ">i2"),
+                            ("NBIN", ">i2"),
+                            ("NBIN_PRD", ">i2"),
+                            ("TBIN", ">f8"),
+                            ("CTR_FREQ", ">f8"),
+                            ("NCHAN", ">i2"),
+                            ("CHAN_BW", ">f8"),
+                            ("DM", ">f8"),
+                            ("RM", ">f8"),
+                            ("PR_CORR", ">i2"),
+                            ("FD_CORR", ">i2"),
+                            ("BE_CORR", ">i2"),
+                            ("RM_CORR", ">i2"),
+                            ("DEDISP", ">i2"),
+                            ("DDS_MTHD", "S32"),
+                            ("SC_MTHD", "S32"),
+                            ("CAL_MTHD", "S32"),
+                            ("CAL_FILE", "S32"),
+                            ("RFI_MTHD", "S32"),
+                            ("IFR_MTHD", "S32"),
+                        ],
+                    ),
+                )
+            )
+        ),
+        header=hishdr,
+    )
+
+    nchunk = 4096
+    tchunk = dt * nchunk
+    chunks = np.split(data, np.arange(nchunk, nt, nchunk))
+
+    subhdr = fits.Header(
+        [
+            ("XTENSION", "BINTABLE", "***** Subintegration data  *****"),
+            ("BITPIX", 8, "N/A"),
+            ("NAXIS", 2, "2-dimensional binary table"),
+            (
+                "NAXIS1",
+                (
+                    (nchunk * npol * (nf // (8 // nbits)))
+                    + (nf * 4 * 4)
+                    + (8 * 8)
+                    + (5 * 4)
+                ),
+                "width of table in bytes",
+            ),
+            ("NAXIS2", len(chunks), "Number of rows in table (NSUBINT)"),
+            ("PCOUNT", 0, "size of special data area"),
+            ("GCOUNT", 1, "one data group (required keyword)"),
+            ("TFIELDS", 18, "Number of fields per row"),
+            ("TTYPE1", "INDEXVAL", "Optionally used if INT_TYPE != TIME"),
+            ("TFORM1", "1D", "Double"),
+            ("TTYPE2", "TSUBINT", "Length of subintegration"),
+            ("TFORM2", "1D", "Double"),
+            ("TTYPE3", "OFFS_SUB", "Offset from Start of subint centre"),
+            ("TFORM3", "1D", "Double"),
+            ("TTYPE4", "LST_SUB", "LST at subint centre"),
+            ("TFORM4", "1D", "Double"),
+            ("TTYPE5", "RA_SUB", "RA (J2000) at subint centre"),
+            ("TFORM5", "1D", "Double"),
+            ("TTYPE6", "DEC_SUB", "Dec (J2000) at subint centre"),
+            ("TFORM6", "1D", "Double"),
+            ("TTYPE7", "GLON_SUB", "[deg] Gal longitude at subint centre"),
+            ("TFORM7", "1D", "Double"),
+            ("TTYPE8", "GLAT_SUB", "[deg] Gal latitude at subint centre"),
+            ("TFORM8", "1D", "Double"),
+            ("TTYPE9", "FD_ANG", "[deg] Feed angle at subint centre"),
+            ("TFORM9", "1E", "Float"),
+            ("TTYPE10", "POS_ANG", "[deg] Position angle of feed at subint centre"),
+            ("TFORM10", "1E", "Float"),
+            ("TTYPE11", "PAR_ANG", "[deg] Parallactic angle at subint centre"),
+            ("TFORM11", "1E", "Float"),
+            ("TTYPE12", "TEL_AZ", "[deg] Telescope azimuth at subint centre"),
+            ("TFORM12", "1E", "Float"),
+            ("TTYPE13", "TEL_ZEN", "[deg] Telescope zenith angle at subint centre"),
+            ("TFORM13", "1E", "Float"),
+            ("TTYPE14", "DAT_FREQ", "[MHz] Centre frequency for each channel"),
+            ("TFORM14", "4096E", "NCHAN floats"),
+            ("TTYPE15", "DAT_WTS", "Weights for each channel"),
+            ("TFORM15", "4096E", "NCHAN floats"),
+            ("TTYPE16", "DAT_OFFS", "Data offset for each channel"),
+            ("TFORM16", "4096E", "NCHAN*NPOL floats"),
+            ("TTYPE17", "DAT_SCL", "Data scale factor for each channel"),
+            ("TFORM17", "4096E", "NCHAN*NPOL floats"),
+            ("TTYPE18", "DATA", "Subint data table"),
+            (
+                "TFORM18",
+                f"{nchunk * npol * (nf // (8 // nbits))}B",
+                "I (Fold), X (1-bit) or B (2-8 bit) Search",
+            ),
+            ("INT_TYPE", "TIME", ""),
+            ("INT_UNIT", "SEC", ""),
+            ("SCALE", "FluxDen", ""),
+            ("POL_TYPE", "AA+BB", ""),
+            ("NPOL", npol, "Nr of polarisations"),
+            ("TBIN", dt, "[s] Time per bin or sample"),
+            ("NBIN", "1", ""),
+            ("NBIN_PRD", "*", "Nr of bins/pulse period (for gated data)"),
+            ("PHS_OFFS", "*", "Phase offset of bin 0 for gated data"),
+            ("NBITS", nbits, "Nr of bits/datum (SEARCH mode 'X' data, else 1)"),
+            ("ZERO_OFF", 0, "Zero offset for SEARCH-mode 'X' data"),
+            ("NSUBOFFS", "0", ""),
+            ("NCHAN", nf, "Number of channels/sub-bands in this file"),
+            ("CHAN_BW", np.abs(df), "[MHz] Channel/sub-band width"),
+            ("DM", "*", "[cm-3 pc] DM for post-detection dedisperion"),
+            ("RM", "*", "[rad m-2] RM for post-detection deFaraday"),
+            ("NCHNOFFS", 0, "Channel/sub-band offset for split files"),
+            ("NSBLK", nchunk, "Samples/row (SEARCH mode, else 1)"),
+            ("EXTNAME", "SUBINT", "name of this binary table extension"),
+            ("TUNIT2", "s", "Units of field"),
+            ("TUNIT3", "s", "Units of field"),
+            ("TUNIT4", "s", "Units of field"),
+            ("TUNIT5", "deg", "Units of field"),
+            ("TUNIT6", "deg", "Units of field"),
+            ("TUNIT7", "deg", "Units of field"),
+            ("TUNIT8", "deg", "Units of field"),
+            ("TUNIT9", "deg", "Units of field"),
+            ("TUNIT10", "deg", "Units of field"),
+            ("TUNIT11", "deg", "Units of field"),
+            ("TUNIT12", "deg", "Units of field"),
+            ("TUNIT13", "deg", "Units of field"),
+            ("TUNIT14", "MHz", "Units of field"),
+            ("TUNIT18", "Jy", "Units of subint data"),
+            ("EXTVER", 1, "auto assigned by template parser"),
+            (
+                "TDIM18",
+                f"({nchunk},{npol},{nf // (8 // nbits)})",
+                "size of the multidimensional array",
+            ),
+            ("SIGNINT", "0", ""),
+        ],
+    )
+
+    subints = fits.BinTableHDU.from_columns(
+        fits.ColDefs(
+            np.rec.array(
+                np.array(
+                    [
+                        (
+                            ix + 1,
+                            tchunk,
+                            (ix * tchunk) + (tchunk / 2.0),
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            0.0,
+                            meta["az_start"],
+                            meta["za_start"],
+                            freqs,
+                            np.ones_like(freqs),
+                            np.zeros_like(freqs),
+                            np.ones_like(freqs),
+                            pads(chunk, nchunk).reshape(
+                                nchunk,
+                                npol,
+                                nf // (8 // nbits),
+                            ),
+                        )
+                        for ix, chunk in enumerate(chunks)
+                    ],
+                    dtype=(
+                        np.record,
+                        [
+                            ("INDEXVAL", "f8"),
+                            ("TSUBINT", "f8"),
+                            ("OFFS_SUB", "f8"),
+                            ("LST_SUB", "f8"),
+                            ("RA_SUB", "f8"),
+                            ("DEC_SUB", "f8"),
+                            ("GLON_SUB", "f8"),
+                            ("GLAT_SUB", "f8"),
+                            ("FD_ANG", "f4"),
+                            ("POS_ANG", "f4"),
+                            ("PAR_ANG", "f4"),
+                            ("TEL_AZ", "f4"),
+                            ("TEL_ZEN", "f4"),
+                            ("DAT_FREQ", "f4", (nf,)),
+                            ("DAT_WTS", "f4", (nf,)),
+                            ("DAT_OFFS", "f4", (nf,)),
+                            ("DAT_SCL", "f4", (nf,)),
+                            ("DATA", "u1", (nchunk, npol, nf // (8 // nbits))),
+                        ],
+                    ),
+                )
+            )
+        ),
+        header=subhdr,
+    )
+
+    hdus = fits.HDUList([primary, history, subints])
+    hdus.writeto(f"{Path(f).with_suffix('.sf')}")
+
+
+@click.command()
+@click.argument("infiles", nargs=-1, type=click.Path(exists=True))
+def main(infiles: list[str]):
+    """
+    Convert a SIGPROC filterbank file to a PSRFITS file.
+    """
+
+    with console.status("Converting..."):
+        for infile in infiles:
+            fil2fits(infile)
+
+
+if __name__ == "__main__":
+    main()

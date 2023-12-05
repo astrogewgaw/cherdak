@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+
+den="/mnt/disk1/data/Ujjwal"
+
+# Find the basename of a file. Can optionally remove provided suffix.
+basename() {
+	local tmp
+	tmp=${1%"${1##*[!/]}"}
+	tmp=${tmp##*/}
+	tmp=${tmp%"${2/"$tmp"/}"}
+	printf '%s\n' "${tmp:-/}"
+}
+
+# Dedisperse the data at a specified DM.
+dedisp() { prepdata -nobary -dm "$1" "$2" -o "$3"; }
+
+# Dedisperse the data over a range.
+dedisps() {
+	for dm in 100 350 600 850 1100 1350 1600; do
+		prepsubband -nobary -nsub 128 -lodm "$dm" -dmstep 10 -numdms 25 "$1" -o "$2"
+	done
+	prepsubband -nobary -nsub 128 -lodm 1850 -dmstep 10 -numdms 16 "$1" -o "$2"
+}
+
+# Perform a single pulse search on the data.
+search() {
+	single_pulse_search.py -b -t 5.0 -m 100.0 ./*.dat
+}
+
+# Collect the candidates and write them out to a CSV file.
+collect() {
+	echo "file,snr,stime,width,dm,label,chan_mask_path,num_files" >"${2}_cands.csv"
+	tail -n +2 -q ./*.singlepulse |
+		awk -v fp="$PWD/$1" ' NR>0 { if ($5 < 500) print fp","$2","$3","$1","int(log($5)/log(2))}' |
+		awk -F, '{print $1","$2","$3","$5","$4",""0"","""",""1"}' >>"${2}_cands.csv"
+}
+
+# Classify the candidates.
+classify() {
+	(
+		source "$den/env.sh"
+		printf -- '-c\0%s\0' ./*.csv | xargs -0 your_candmaker.py -g 0 -n 4
+		predict.py --data_dir "$PWD" --model a
+	)
+}
+
+# Prints a simple cover for the script.
+cover() {
+	echo "      __                          __  "
+	echo "     / /_  ____  __  ______  ____/ /  "
+	echo "    / __ \/ __ \/ / / / __ \/ __  /   "
+	echo "   / / / / /_/ / /_/ / / / / /_/ /    "
+	echo "  /_/ /_/\____/\__,_/_/ /_/\__,_/     "
+	echo "                                      "
+	echo "  © 2023 Ujjwal Panda | MIT License.  "
+	echo "     Sniffing out FRBs since 2023!    "
+}
+
+# Prints help for the script.
+helps() {
+	cover | gum style \
+		--bold \
+		--width 50 \
+		--align center \
+		--padding "1 2" \
+		--border normal
+	printf "\n"
+	gum format <<EOF
+**Commands**:
+*show*:   Explore the outputs.
+*sniff*:  Perform a full-band search.
+*hunt*:   Perform a subband search (1024 channels per subband, with 50% overlap).
+EOF
+	printf "\n"
+}
+
+# Visualise the selected candidate.
+shows() {
+	cat "results_a.csv" |
+		awk -F',' 'NR==1 || $4==1.0 {print $1","$2","$3}' >"final_cands.csv"
+	fn=$(cat "final_cands.csv" |
+		gum table --widths "2,50,10" --height "10" |
+		awk -F',' '{print $2}')
+	if [[ -n "$fn" ]]; then
+		(
+			source "$den/env.sh"
+			your_h5plotter.py -f "$fn"
+		)
+		eog "$(basename "$fn" ".h5").png"
+	fi
+}
+
+# Performs a full band search.
+sniffs() {
+	shopt -s failglob
+	(
+		source "$den/env.sh"
+		fits2fil ./*.sf
+	)
+	files=(./*.fil)
+	for file in "${files[@]}"; do
+		bsname="$(basename "$file" ".fil")"
+		bsdir="${bsname}.run"
+		mkdir -p "$bsdir"
+		mv "$file" "$bsdir"
+		cd "$bsdir" || exit
+    if [ -z "$1" ]; then
+      dedisps "$file" "$bsname"
+    else
+      dedisp "$1" "$file" "$bsname"
+    fi
+		search
+		collect "$file" "$bsname"
+		classify
+		cd ..
+	done
+}
+
+# Performs a subband search.
+hunts() {
+	shopt -s failglob
+	(
+		source "$den/env.sh"
+		fits2fil ./*.sf -k 1025 4096
+		fits2fil ./*.sf -k 1 512 -k 1537 4096
+		fits2fil ./*.sf -k 1 1024 -k 2049 4096
+		fits2fil ./*.sf -k 1 1536 -k 2561 4096
+		fits2fil ./*.sf -k 1 2048 -k 3073 4096
+		fits2fil ./*.sf -k 1 2560 -k 3585 4096
+		fits2fil ./*.sf -k 1 3072
+	)
+	files=(./*.sf)
+	for file in "${files[@]}"; do
+		bsname="$(basename "$file" ".sf")"
+		bsdir="${bsname}.run"
+		mkdir -p "$bsdir"
+		mv ${bsname}*.fil "$bsdir"
+		cd "$bsdir" || exit
+		bks=(./*.fil)
+		for bk in "${bks[@]}"; do
+			bs="$(basename "$bk" ".fil")"
+			bd="${bs}.run"
+			mkdir "$bd"
+			mv "$bk" "$bd"
+			cd "$bd" || exit
+      if [ -z "$1" ]; then
+			  dedisps "$bk" "$bs"
+      else
+        dedisp "$1" "$bk" "$bs"
+      fi
+			search
+			collect "$bk" "$bs"
+			classify
+			cd ..
+		done
+		cd ..
+	done
+}
+
+# Implement the subcommands.
+CMD=$1
+case $CMD in
+"" | "-h" | "--help") helps ;;
+"sniff") sniffs "$2" ;;
+"hunt") hunts "$2" ;;
+"show") shows ;;
+*) helps ;;
+esac
